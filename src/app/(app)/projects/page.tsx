@@ -2,9 +2,9 @@
 // src/app/(app)/projects/page.tsx
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Search, FolderOpen, Calendar, MoreVertical, Trash2, Edit2, Users } from 'lucide-react'
+import { Plus, Search, FolderOpen, Calendar, MoreVertical, Trash2, Edit2 } from 'lucide-react'
 import { ProjectWithRelations } from '@/types'
-import { formatDate, PROJECT_STATUS_CONFIG, getInitials, getAvatarGradient, PRESET_COLORS } from '@/lib/utils'
+import { formatDate, PROJECT_STATUS_CONFIG, getInitials, getAvatarGradient } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
 export default function ProjectsPage() {
@@ -24,11 +24,12 @@ export default function ProjectsPage() {
   async function deleteProject(id: string, name: string) {
     if (!confirm(`Hapus project "${name}"? Semua task akan ikut terhapus.`)) return
     const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' })
+    const data = await res.json().catch(() => null)
     if (res.ok) {
       setProjects(p => p.filter(pr => pr.id !== id))
       toast.success('Project dihapus')
     } else {
-      toast.error('Gagal menghapus project')
+      toast.error(data?.error || 'Gagal menghapus project')
     }
   }
 
@@ -76,23 +77,24 @@ export default function ProjectsPage() {
             return (
               <div key={project.id} className={`card p-5 group relative animate-up stagger-${Math.min(i+1, 4)}`}>
                 {/* Actions */}
-                <div className="absolute top-4 right-4 z-10">
-                  <button onClick={e => { e.preventDefault(); setMenu(menu === project.id ? null : project.id) }}
+                <div className="absolute top-4 right-4 z-30" onClick={(e) => e.stopPropagation()}>
+                  <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setMenu(menu === project.id ? null : project.id) }}
                     className="btn btn-icon btn-ghost opacity-0 group-hover:opacity-100 transition-opacity"
                     style={{ padding: '5px' }}>
                     <MoreVertical size={15} />
                   </button>
                   {menu === project.id && (
-                    <div className="absolute right-0 top-8 rounded-xl py-1 min-w-[150px] shadow-2xl z-20"
+                    <div className="absolute right-0 top-8 rounded-xl py-1 min-w-[150px] shadow-2xl z-40"
+                      onClick={(e) => e.stopPropagation()}
                       style={{ background: '#1e1e32', border: '1px solid rgba(255,255,255,0.08)' }}>
-                      <Link href={`/projects/${project.id}/edit`} onClick={() => setMenu(null)}
+                      <Link href={`/projects/${project.id}/edit`} onClick={(e) => { e.stopPropagation(); setMenu(null) }}
                         className="flex items-center gap-2 px-4 py-2.5 text-sm transition-colors"
                         style={{ color: 'var(--text-2)' }}
                         onMouseEnter={e => (e.currentTarget.style.color = '#e8e8f0')}
                         onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-2)')}>
                         <Edit2 size={13} />Edit
                       </Link>
-                      <button onClick={() => { setMenu(null); deleteProject(project.id, project.name) }}
+                      <button type="button" onClick={(e) => { e.stopPropagation(); setMenu(null); deleteProject(project.id, project.name) }}
                         className="flex items-center gap-2 px-4 py-2.5 text-sm w-full transition-colors text-left"
                         style={{ color: '#f87171' }}
                         onMouseEnter={e => ((e.currentTarget as HTMLElement).style.background = 'rgba(244,63,94,0.08)')}
@@ -163,7 +165,7 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      {menu && <div className="fixed inset-0 z-10" onClick={() => setMenu(null)} />}
+      {menu && <button type="button" className="fixed inset-0 z-20" onClick={() => setMenu(null)} aria-label="Tutup menu aksi project" />}
     </div>
   )
 }

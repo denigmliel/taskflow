@@ -94,8 +94,8 @@ export default function TeamPage() {
         <div className="space-y-3">
           {members.map((member, i) => {
             const u = member.user
-            const tasks = u.assignedTasks || []
-            const done = tasks.filter((t: any) => t.status === 'DONE').length
+            const done = member.taskStats?.done || 0
+            const total = member.taskStats?.total || 0
 
             return (
               <div key={member.id} className="card p-4 flex items-center gap-4 animate-up" style={{ animationDelay: `${i * 0.04}s` }}>
@@ -114,7 +114,7 @@ export default function TeamPage() {
                 </div>
                 <div className="flex items-center gap-1 text-xs flex-shrink-0" style={{ color: 'var(--text-3)' }}>
                   <CheckSquare2 size={12} />
-                  <span>{done}/{tasks.length}</span>
+                  <span>{done}/{total}</span>
                 </div>
                 <button onClick={() => removeMember(u.id, u.name)}
                   className="btn btn-icon btn-ghost flex-shrink-0 opacity-0 group-hover:opacity-100"

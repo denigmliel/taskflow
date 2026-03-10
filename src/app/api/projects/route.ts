@@ -24,17 +24,59 @@ export async function GET() {
     orderBy: { updatedAt: 'desc' },
   })
 
-  // Attach task stats
+  if (projects.length === 0) {
+    return NextResponse.json({ success: true, data: [] })
+  }
+
+  // Aggregate task stats in batch to avoid N+1 queries.
+  const projectIds = projects.map((project) => project.id)
   const now = new Date()
-  const withStats = await Promise.all(projects.map(async p => {
-    const [todo, inProgress, done, overdue] = await Promise.all([
-      prisma.task.count({ where: { projectId: p.id, status: 'TODO' } }),
-      prisma.task.count({ where: { projectId: p.id, status: 'IN_PROGRESS' } }),
-      prisma.task.count({ where: { projectId: p.id, status: 'DONE' } }),
-      prisma.task.count({ where: { projectId: p.id, status: { not: 'DONE' }, deadline: { lt: now } } }),
-    ])
-    return { ...p, taskStats: { total: p._count.tasks, todo, inProgress, done, overdue } }
-  }))
+  const [statusCounts, overdueCounts] = await Promise.all([
+    prisma.task.groupBy({
+      by: ['projectId', 'status'],
+      where: { projectId: { in: projectIds } },
+      _count: { _all: true },
+    }),
+    prisma.task.groupBy({
+      by: ['projectId'],
+      where: {
+        projectId: { in: projectIds },
+        status: { not: 'DONE' },
+        deadline: { lt: now },
+      },
+      _count: { _all: true },
+    }),
+  ])
+
+  const statsMap = new Map<string, { todo: number; inProgress: number; done: number; overdue: number }>()
+  for (const project of projects) {
+    statsMap.set(project.id, { todo: 0, inProgress: 0, done: 0, overdue: 0 })
+  }
+
+  for (const row of statusCounts) {
+    const stats = statsMap.get(row.projectId)
+    if (!stats) continue
+    if (row.status === 'TODO') stats.todo = row._count._all
+    if (row.status === 'IN_PROGRESS') stats.inProgress = row._count._all
+    if (row.status === 'DONE') stats.done = row._count._all
+  }
+
+  for (const row of overdueCounts) {
+    const stats = statsMap.get(row.projectId)
+    if (!stats) continue
+    stats.overdue = row._count._all
+  }
+
+  const withStats = projects.map((project) => {
+    const stats = statsMap.get(project.id) || { todo: 0, inProgress: 0, done: 0, overdue: 0 }
+    return {
+      ...project,
+      taskStats: {
+        total: project._count.tasks,
+        ...stats,
+      },
+    }
+  })
 
   return NextResponse.json({ success: true, data: withStats })
 }

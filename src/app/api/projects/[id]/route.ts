@@ -50,21 +50,40 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
   const project = await getProject(params.id, userId)
   if (!project) return NextResponse.json({ error: 'Project tidak ditemukan' }, { status: 404 })
-  if (project.ownerId !== userId) {
-    return NextResponse.json({ error: 'Hanya pemilik project yang dapat mengubah detail project' }, { status: 403 })
-  }
 
   const body = await req.json()
+  const data: any = {}
+
+  if (typeof body.name === 'string') {
+    const trimmedName = body.name.trim()
+    if (!trimmedName) return NextResponse.json({ error: 'Nama project wajib diisi' }, { status: 400 })
+    data.name = trimmedName
+  }
+
+  if ('description' in body) {
+    const description = typeof body.description === 'string' ? body.description.trim() : ''
+    data.description = description || null
+  }
+
+  if (typeof body.color === 'string' && body.color.trim()) {
+    data.color = body.color.trim()
+  }
+
+  if (typeof body.status === 'string') {
+    data.status = body.status
+  }
+
+  if ('startDate' in body) {
+    data.startDate = body.startDate ? new Date(body.startDate) : null
+  }
+
+  if ('endDate' in body) {
+    data.endDate = body.endDate ? new Date(body.endDate) : null
+  }
+
   const updated = await prisma.project.update({
     where: { id: params.id },
-    data: {
-      name:        body.name?.trim()       || project.name,
-      description: body.description?.trim() ?? project.description,
-      color:       body.color              || project.color,
-      status:      body.status             || project.status,
-      startDate:   body.startDate ? new Date(body.startDate) : project.startDate,
-      endDate:     body.endDate   ? new Date(body.endDate)   : project.endDate,
-    },
+    data,
     include: {
       owner:   { select: userSelect },
       members: { include: { user: { select: userSelect } } },
@@ -84,10 +103,8 @@ export async function DELETE(_: NextRequest, { params }: { params: { id: string 
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const userId = (session.user as any).id
 
-  const project = await prisma.project.findFirst({
-    where: { id: params.id, ownerId: userId },
-  })
-  if (!project) return NextResponse.json({ error: 'Tidak bisa menghapus project ini' }, { status: 403 })
+  const project = await getProject(params.id, userId)
+  if (!project) return NextResponse.json({ error: 'Project tidak ditemukan' }, { status: 404 })
 
   await prisma.project.delete({ where: { id: params.id } })
   return NextResponse.json({ success: true })

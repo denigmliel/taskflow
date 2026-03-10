@@ -1,6 +1,6 @@
 'use client'
 // src/app/(app)/projects/[id]/board/page.tsx
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import {
   DndContext, DragEndEvent, DragOverlay, DragStartEvent,
@@ -118,27 +118,61 @@ export default function BoardPage() {
   const [editTask, setEditTask]     = useState<TaskWithRelations | null>(null)
   const [defaultStatus, setDefaultStatus] = useState<TaskStatus>('TODO')
   const [search, setSearch]         = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterPriority, setFilterPriority] = useState('')
+  const hasLoaded = useRef(false)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
-  const fetchBoard = useCallback(() => {
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 250)
+    return () => clearTimeout(t)
+  }, [search])
+
+  const fetchBoard = useCallback((signal?: AbortSignal) => {
     const params2 = new URLSearchParams()
-    if (search)         params2.set('search', search)
+    if (debouncedSearch) params2.set('search', debouncedSearch)
     if (filterPriority) params2.set('priority', filterPriority)
+    const query = params2.toString()
+    const url = query ? `/api/projects/${projectId}/tasks?${query}` : `/api/projects/${projectId}/tasks`
 
-    fetch(`/api/projects/${projectId}/tasks?${params2}`).then(r => r.json()).then(r => {
-      if (r.success) setBoard(r.data.board)
-    }).finally(() => setLoading(false))
-  }, [projectId, search, filterPriority])
+    if (!hasLoaded.current) setLoading(true)
 
-  useEffect(() => { fetchBoard() }, [fetchBoard])
+    fetch(url, { signal, cache: 'no-store' })
+      .then(r => r.json())
+      .then(r => {
+        if (r.success) setBoard(r.data.board)
+      })
+      .catch(err => {
+        if (err?.name !== 'AbortError') toast.error('Gagal memuat board')
+      })
+      .finally(() => {
+        if (!signal?.aborted) {
+          setLoading(false)
+          hasLoaded.current = true
+        }
+      })
+  }, [projectId, debouncedSearch, filterPriority])
 
   useEffect(() => {
-    fetch(`/api/projects/${projectId}/members`).then(r => r.json()).then(r => {
-      if (r.success) setMembers(r.data.map((m: any) => m.user))
-    })
+    const controller = new AbortController()
+    fetchBoard(controller.signal)
+    return () => controller.abort()
+  }, [fetchBoard])
+
+  useEffect(() => {
+    setMembers([])
   }, [projectId])
+
+  const loadMembers = useCallback(() => {
+    if (members.length > 0) return
+    fetch(`/api/projects/${projectId}/members`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then(r => {
+        if (r.success) setMembers(r.data.map((m: any) => m.user))
+      })
+      .catch(() => {})
+  }, [members.length, projectId])
 
   function handleDragStart(e: DragStartEvent) {
     const task = Object.values(board).flat().find(t => t.id === e.active.id)
@@ -188,10 +222,12 @@ export default function BoardPage() {
   const openNew = (status: TaskStatus) => {
     setEditTask(null)
     setDefaultStatus(status)
+    loadMembers()
     setModal(true)
   }
   const openEdit = (task: TaskWithRelations) => {
     setEditTask(task)
+    loadMembers()
     setModal(true)
   }
 

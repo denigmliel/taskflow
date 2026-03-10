@@ -56,6 +56,7 @@ model Project {
   tasks    Task[]
   activities ActivityLog[]
 
+  @@index([ownerId])
   @@map("projects")
 }
 
@@ -69,6 +70,7 @@ model ProjectMember {
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, userId])
+  @@index([userId])
   @@map("project_members")
 }
 
@@ -93,6 +95,9 @@ model Task {
 
   @@index([projectId, status])
   @@index([assigneeId])
+  @@index([projectId, assigneeId])
+  @@index([projectId, priority])
+  @@index([projectId, deadline])
   @@map("tasks")
 }
 

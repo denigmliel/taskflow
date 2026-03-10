@@ -35,20 +35,42 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
   const members = await prisma.projectMember.findMany({
     where: { projectId: params.id },
     include: {
-      user: {
-        select: {
-          ...userSelect,
-          assignedTasks: {
-            where: { projectId: params.id },
-            select: { id: true, status: true },
-          },
-        },
-      },
+      user: { select: userSelect },
     },
     orderBy: { joinedAt: 'asc' },
   })
 
-  return NextResponse.json({ success: true, data: members })
+  const memberIds = members.map((member) => member.userId)
+  const taskCounts = memberIds.length
+    ? await prisma.task.groupBy({
+        by: ['assigneeId', 'status'],
+        where: {
+          projectId: params.id,
+          assigneeId: { in: memberIds },
+        },
+        _count: { _all: true },
+      })
+    : []
+
+  const taskStatsMap = new Map<string, { total: number; done: number }>()
+  for (const member of members) {
+    taskStatsMap.set(member.userId, { total: 0, done: 0 })
+  }
+
+  for (const row of taskCounts) {
+    if (!row.assigneeId) continue
+    const stats = taskStatsMap.get(row.assigneeId)
+    if (!stats) continue
+    stats.total += row._count._all
+    if (row.status === 'DONE') stats.done += row._count._all
+  }
+
+  const data = members.map((member) => ({
+    ...member,
+    taskStats: taskStatsMap.get(member.userId) || { total: 0, done: 0 },
+  }))
+
+  return NextResponse.json({ success: true, data })
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {

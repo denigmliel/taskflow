@@ -6,7 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { logActivity } from '@/lib/activity'
 import { TaskStatus } from '@prisma/client'
 
-const userSelect = { id: true, name: true, email: true, role: true, avatar: true }
+const userSelect = { id: true, name: true, avatar: true }
 
 async function getProjectAccess(projectId: string, userId: string) {
   return prisma.project.findFirst({
@@ -47,14 +47,15 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
   })
 
-  // Group by status for board view
-  const board = {
-    TODO:        tasks.filter(t => t.status === 'TODO'),
-    IN_PROGRESS: tasks.filter(t => t.status === 'IN_PROGRESS'),
-    DONE:        tasks.filter(t => t.status === 'DONE'),
+  // Group tasks for board response in one pass.
+  const board: Record<TaskStatus, typeof tasks> = {
+    TODO: [],
+    IN_PROGRESS: [],
+    DONE: [],
   }
+  for (const task of tasks) board[task.status].push(task)
 
-  return NextResponse.json({ success: true, data: { tasks, board } })
+  return NextResponse.json({ success: true, data: { board } })
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {

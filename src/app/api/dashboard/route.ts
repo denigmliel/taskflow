@@ -10,56 +10,129 @@ export async function GET() {
 
   const userId = (session.user as any).id
 
-  // Projects user is part of
-  const userProjects = await prisma.project.findMany({
-    where: {
-      OR: [
-        { ownerId: userId },
-        { members: { some: { userId } } },
-      ],
-    },
-    select: { id: true },
-  })
-  const projectIds = userProjects.map(p => p.id)
+  const projectWhere = {
+    OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+  }
 
-  const now = new Date()
-
-  const [totalTasks, doneTasks, inProgressTasks, overdueTasks] = await Promise.all([
-    prisma.task.count({ where: { projectId: { in: projectIds } } }),
-    prisma.task.count({ where: { projectId: { in: projectIds }, status: 'DONE' } }),
-    prisma.task.count({ where: { projectId: { in: projectIds }, status: 'IN_PROGRESS' } }),
-    prisma.task.count({ where: { projectId: { in: projectIds }, status: { not: 'DONE' }, deadline: { lt: now } } }),
+  // Fetch project ids and recent projects in parallel.
+  const [userProjects, recentProjectsRaw] = await Promise.all([
+    prisma.project.findMany({
+      where: projectWhere,
+      select: { id: true },
+    }),
+    prisma.project.findMany({
+      where: projectWhere,
+      select: {
+        id: true,
+        name: true,
+        color: true,
+        _count: { select: { tasks: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 6,
+    }),
   ])
 
-  const myTasks = await prisma.task.findMany({
-    where: { projectId: { in: projectIds }, assigneeId: userId, status: { not: 'DONE' } },
-    include: { assignee: { select: { id: true, name: true, email: true, role: true, avatar: true } }, creator: { select: { id: true, name: true, email: true, role: true, avatar: true } }, project: true },
-    orderBy: [{ deadline: 'asc' }, { priority: 'desc' }],
-    take: 8,
-  })
+  const projectIds = userProjects.map(p => p.id)
+  if (projectIds.length === 0) {
+    return NextResponse.json({
+      success: true,
+      data: {
+        totalProjects: 0,
+        totalTasks: 0,
+        completedTasks: 0,
+        inProgressTasks: 0,
+        overdueTasks: 0,
+        completionRate: 0,
+        myTasks: [],
+        recentProjects: [],
+        tasksByStatus: [],
+        tasksByPriority: [],
+      },
+    })
+  }
 
-  const recentProjects = await prisma.project.findMany({
-    where: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
-    include: {
-      owner: { select: { id: true, name: true, email: true, role: true, avatar: true } },
-      members: { include: { user: { select: { id: true, name: true, email: true, role: true, avatar: true } } } },
-      _count: { select: { tasks: true } },
-    },
-    orderBy: { updatedAt: 'desc' },
-    take: 6,
-  })
+  const now = new Date()
+  const recentProjectIds = recentProjectsRaw.map((project) => project.id)
 
-  // Task distribution
-  const tasksByStatusRaw = await prisma.task.groupBy({
-    by: ['status'],
-    where: { projectId: { in: projectIds } },
-    _count: true,
-  })
+  const [statusTotals, overdueTasks, tasksByPriorityRaw, myTasks, recentDoneRaw] = await Promise.all([
+    prisma.task.groupBy({
+      by: ['status'],
+      where: { projectId: { in: projectIds } },
+      _count: { _all: true },
+    }),
+    prisma.task.count({
+      where: { projectId: { in: projectIds }, status: { not: 'DONE' }, deadline: { lt: now } },
+    }),
+    prisma.task.groupBy({
+      by: ['priority'],
+      where: { projectId: { in: projectIds }, status: { not: 'DONE' } },
+      _count: { _all: true },
+    }),
+    prisma.task.findMany({
+      where: { projectId: { in: projectIds }, assigneeId: userId, status: { not: 'DONE' } },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        status: true,
+        priority: true,
+        deadline: true,
+        progress: true,
+        assigneeId: true,
+        creatorId: true,
+        projectId: true,
+        createdAt: true,
+        updatedAt: true,
+        project: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+      },
+      orderBy: [{ deadline: 'asc' }, { priority: 'desc' }],
+      take: 8,
+    }),
+    recentProjectIds.length > 0
+      ? prisma.task.groupBy({
+          by: ['projectId'],
+          where: { projectId: { in: recentProjectIds }, status: 'DONE' },
+          _count: { _all: true },
+        })
+      : Promise.resolve([]),
+  ])
 
-  const tasksByPriorityRaw = await prisma.task.groupBy({
-    by: ['priority'],
-    where: { projectId: { in: projectIds }, status: { not: 'DONE' } },
-    _count: true,
+  const statusCountByKey = {
+    TODO: 0,
+    IN_PROGRESS: 0,
+    DONE: 0,
+  }
+  for (const row of statusTotals) {
+    statusCountByKey[row.status] = row._count._all
+  }
+
+  const totalTasks = statusCountByKey.TODO + statusCountByKey.IN_PROGRESS + statusCountByKey.DONE
+  const doneTasks = statusCountByKey.DONE
+  const inProgressTasks = statusCountByKey.IN_PROGRESS
+
+  const doneByProject = new Map<string, number>()
+  for (const row of recentDoneRaw) {
+    doneByProject.set(row.projectId, row._count._all)
+  }
+
+  const recentProjects = recentProjectsRaw.map((project) => {
+    const done = doneByProject.get(project.id) || 0
+    return {
+      id: project.id,
+      name: project.name,
+      color: project.color,
+      taskStats: {
+        total: project._count.tasks,
+        done,
+      },
+    }
   })
 
   const statusColors = { TODO: '#64748b', IN_PROGRESS: '#3b82f6', DONE: '#22c55e' }
@@ -78,14 +151,14 @@ export async function GET() {
       completionRate:  totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0,
       myTasks,
       recentProjects,
-      tasksByStatus: tasksByStatusRaw.map(s => ({
+      tasksByStatus: statusTotals.map(s => ({
         name:  statusLabels[s.status as keyof typeof statusLabels],
-        value: s._count,
+        value: s._count._all,
         color: statusColors[s.status as keyof typeof statusColors],
       })),
       tasksByPriority: tasksByPriorityRaw.map(p => ({
         name:  priorityLabels[p.priority as keyof typeof priorityLabels],
-        value: p._count,
+        value: p._count._all,
         color: priorityColors[p.priority as keyof typeof priorityColors],
       })),
     },
